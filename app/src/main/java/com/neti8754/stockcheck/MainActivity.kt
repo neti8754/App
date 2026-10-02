@@ -164,6 +164,7 @@ class StockViewModel(private val repo: Repository) : ViewModel() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StockCheckApp(vm: StockViewModel) {
     val data by vm.data.collectAsStateWithLifecycle(initialValue = AppData())

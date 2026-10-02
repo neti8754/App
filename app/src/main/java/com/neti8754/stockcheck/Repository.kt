@@ -15,5 +15,5 @@ class Repository(private val context: Context) {
     val data: Flow<AppData> = context.dataStore.data.map { prefs ->
         prefs[key]?.let { runCatching { json.decodeFromString<AppData>(it) }.getOrNull() } ?: AppData()
     }
-    suspend fun save(data: AppData) { context.dataStore.edit { it[key] = json.encodeToString(data) } }
+    suspend fun save(data: AppData) { context.dataStore.edit { prefs -> prefs[key] = json.encodeToString(AppData.serializer(), data) } }
 }

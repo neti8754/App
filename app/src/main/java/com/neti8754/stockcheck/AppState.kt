@@ -45,7 +45,8 @@ object ShoppingLogic {
     const val MISSING = "missing"
 
     private fun key(templateId: String, itemId: String) = "$templateId:$itemId"
-    private fun normalized(name: String) = name.trim().replace(Regex("\s+"), " ").lowercase()
+
+    fun normalizeName(name: String) = name.trim().replace(Regex("\s+"), " ").lowercase()
 
     fun rebuildShopping(data: AppData): List<ShoppingItem> {
         val missing = linkedMapOf<String, MutableSet<String>>()
@@ -55,13 +56,13 @@ object ShoppingLogic {
                 if (data.checks[key(template.id, item.id)] == MISSING) {
                     val cleanName = item.name.trim()
                     if (cleanName.isNotEmpty()) {
-                        missing.getOrPut(normalized(cleanName)) { linkedSetOf() }.add(template.name)
+                        missing.getOrPut(normalizeName(cleanName)) { linkedSetOf() }.add(template.name)
                     }
                 }
             }
         }
 
-        val existing = data.shopping.associateBy { normalized(it.name) }
+        val existing = data.shopping.associateBy { normalizeName(it.name) }
         val rebuilt = missing.map { (normalizedName, sources) ->
             val previous = existing[normalizedName]
             ShoppingItem(
@@ -73,7 +74,7 @@ object ShoppingLogic {
         }
 
         val autoNames = missing.keys
-        val manualOnly = data.shopping.filter { it.manual && normalized(it.name) !in autoNames }
+        val manualOnly = data.shopping.filter { it.manual && normalizeName(it.name) !in autoNames }
         return rebuilt + manualOnly
     }
 

@@ -1,8 +1,14 @@
 name: Android Build
+
 on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
+
+concurrency:
+  group: android-build
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest

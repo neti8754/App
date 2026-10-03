@@ -1,11 +1,16 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 package com.neti8754.stockcheck
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -13,15 +18,25 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.*
+import com.neti8754.stockcheck.ui.components.*
+import com.neti8754.stockcheck.ui.theme.AppSpacing
+import com.neti8754.stockcheck.ui.theme.StockCheckTheme
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -37,56 +52,63 @@ class StockViewModel(private val repo: Repository) : ViewModel() {
     val data = repo.data
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val updateMutex = Mutex()
+    private val eventChannel = Channel<String>(Channel.BUFFERED)
+    val events = eventChannel.receiveAsFlow()
 
-    private fun update(transform: (AppData) -> AppData) = scope.launch {
+    private fun update(transform: (AppData) -> AppData, message: String? = null) = scope.launch {
         updateMutex.withLock {
-            repo.save(transform(data.first()))
+            val next = transform(data.first())
+            repo.save(next)
+            if (message != null) eventChannel.send(message)
         }
     }
 
-    fun setCheck(templateId: String, itemId: String, status: String) = update { old ->
+    fun setCheck(templateId: String, itemId: String, status: String) = update({ old ->
         val checks = old.checks.toMutableMap()
         checks[ShoppingLogic.checkKey(templateId, itemId)] = status
         val next = old.copy(checks = checks)
-        next.copy(shopping = ShoppingLogic.rebuildShopping(next))
-    }
+        next.copy(tasks = ShoppingLogic.rebuildTasks(next))
+    }, when (status) {
+        ShoppingLogic.PRESENT -> "סומן כקיים"
+        ShoppingLogic.MISSING -> "נוסף למשימות"
+        else -> "הסימון אופס"
+    })
 
     fun addTemplate(name: String) = update { old ->
         val clean = name.trim()
         if (clean.isEmpty()) old else old.copy(templates = old.templates + Template(name = clean))
     }
 
-    fun renameTemplate(id: String, name: String) = update { old ->
+    fun renameTemplate(id: String, name: String) = update({ old ->
         val clean = name.trim()
         if (clean.isEmpty()) old
         else {
             val next = old.copy(templates = old.templates.map { if (it.id == id) it.copy(name = clean) else it })
-            next.copy(shopping = ShoppingLogic.rebuildShopping(next))
+            next.copy(tasks = ShoppingLogic.rebuildTasks(next))
         }
-    }
+    }, "הרשימה נשמרה")
 
     fun duplicateTemplate(templateId: String) = update { old ->
         val source = old.templates.firstOrNull { it.id == templateId } ?: return@update old
-        val duplicate = Template(
-            name = "${source.name} — עותק",
-            items = source.items.map { ChecklistItem(name = it.name) }
+        old.copy(
+            templates = old.templates + Template(
+                name = source.name + " — עותק",
+                items = source.items.map { ChecklistItem(name = it.name) }
+            )
         )
-        old.copy(templates = old.templates + duplicate)
     }
 
-    fun deleteTemplate(id: String) = update { old ->
-        val checks = old.checks.filterKeys { !it.startsWith("${id}:") }
+    fun deleteTemplate(id: String) = update({ old ->
         val next = old.copy(
             templates = old.templates.filterNot { it.id == id },
-            checks = checks
+            checks = old.checks.filterKeys { !it.startsWith(id + ":") }
         )
-        next.copy(shopping = ShoppingLogic.rebuildShopping(next))
-    }
+        next.copy(tasks = ShoppingLogic.rebuildTasks(next))
+    }, "הרשימה נמחקה")
 
-    fun addItem(templateId: String, item: String) = update { old ->
-        val clean = item.trim()
-        if (clean.isEmpty()) old
-        else old.copy(
+    fun addItem(templateId: String, name: String) = update { old ->
+        val clean = name.trim()
+        if (clean.isEmpty()) old else old.copy(
             templates = old.templates.map {
                 if (it.id == templateId) it.copy(items = it.items + ChecklistItem(name = clean)) else it
             }
@@ -99,59 +121,50 @@ class StockViewModel(private val repo: Repository) : ViewModel() {
         else {
             val next = old.copy(templates = old.templates.map { template ->
                 if (template.id != templateId) template
-                else template.copy(items = template.items.map { item -> if (item.id == itemId) item.copy(name = clean) else item })
+                else template.copy(items = template.items.map { item ->
+                    if (item.id == itemId) item.copy(name = clean) else item
+                })
             })
-            next.copy(shopping = ShoppingLogic.rebuildShopping(next))
+            next.copy(tasks = ShoppingLogic.rebuildTasks(next))
         }
     }
 
-    fun removeItem(templateId: String, itemId: String) = update { old ->
-        val checks = old.checks.toMutableMap().apply { remove(ShoppingLogic.checkKey(templateId, itemId)) }
+    fun removeItem(templateId: String, itemId: String) = update({ old ->
         val next = old.copy(
             templates = old.templates.map {
                 if (it.id == templateId) it.copy(items = it.items.filterNot { item -> item.id == itemId }) else it
             },
-            checks = checks
+            checks = old.checks - ShoppingLogic.checkKey(templateId, itemId)
         )
-        next.copy(shopping = ShoppingLogic.rebuildShopping(next))
-    }
+        next.copy(tasks = ShoppingLogic.rebuildTasks(next))
+    }, "הפריט נמחק")
 
-    fun addShopping(name: String) = update { old ->
+    fun addTask(name: String) = update { old ->
         val clean = name.trim()
         if (clean.isEmpty()) old
         else {
             val normalized = ShoppingLogic.normalizeName(clean)
-            val existing = old.shopping.firstOrNull { ShoppingLogic.normalizeName(it.name) == normalized }
-            val shopping = if (existing == null) {
-                old.shopping + ShoppingItem(name = clean, manual = true)
-            } else {
-                old.shopping.map { item ->
-                    if (ShoppingLogic.normalizeName(item.name) == normalized) item.copy(manual = true) else item
-                }
-            }
-            old.copy(shopping = shopping)
+            val exists = old.tasks.any { ShoppingLogic.normalizeName(it.name) == normalized }
+            if (exists) old
+            else old.copy(tasks = old.tasks + TaskItem(name = clean, manual = true))
         }
     }
 
-    fun togglePurchased(name: String) = update { old ->
+    fun toggleTask(name: String) = update { old ->
         val normalized = ShoppingLogic.normalizeName(name)
-        old.copy(shopping = old.shopping.map {
-            if (ShoppingLogic.normalizeName(it.name) == normalized) it.copy(purchased = !it.purchased) else it
+        old.copy(tasks = old.tasks.map {
+            if (ShoppingLogic.normalizeName(it.name) == normalized) it.copy(completed = !it.completed) else it
         })
     }
 
-    fun removeShopping(name: String) = update { old ->
+    fun removeTask(name: String) = update({ old ->
         val normalized = ShoppingLogic.normalizeName(name)
-        old.copy(shopping = old.shopping.filterNot { ShoppingLogic.normalizeName(it.name) == normalized })
-    }
+        old.copy(tasks = old.tasks.filterNot {
+            it.manual && ShoppingLogic.normalizeName(it.name) == normalized
+        })
+    }, "המשימה נמחקה")
 
-    fun clearPurchased() = update { old ->
-        old.copy(shopping = old.shopping.filterNot { it.purchased })
-    }
-
-    fun refreshShopping() = update { old ->
-        old.copy(shopping = ShoppingLogic.rebuildShopping(old))
-    }
+    fun setThemeMode(mode: String) = update { old -> old.copy(themeMode = mode) }
 
     companion object {
         fun factory(context: android.content.Context) = object : ViewModelProvider.Factory {
@@ -161,319 +174,642 @@ class StockViewModel(private val repo: Repository) : ViewModel() {
     }
 
     override fun onCleared() {
+        eventChannel.close()
         scope.cancel()
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+private enum class AppTab { HOME, LISTS, TASKS }
+
 @Composable
 fun StockCheckApp(vm: StockViewModel) {
     val data by vm.data.collectAsStateWithLifecycle(initialValue = AppData())
-    var tab by rememberSaveable { mutableIntStateOf(0) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    var tabName by rememberSaveable { mutableStateOf(AppTab.HOME.name) }
+    var selectedTemplateId by rememberSaveable { mutableStateOf<String?>(null) }
+    var settingsOpen by rememberSaveable { mutableStateOf(false) }
+
+    val tab = AppTab.valueOf(tabName)
+    val selectedTemplate = data.templates.firstOrNull { it.id == selectedTemplateId }
+
+    LaunchedEffect(Unit) {
+        vm.events.collect { snackbarHostState.showSnackbar(it) }
+    }
 
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-        MaterialTheme {
-            Scaffold(
-                topBar = { TopAppBar(title = { Text("בדיקת מלאי") }) },
-                bottomBar = {
-                    NavigationBar {
-                        NavigationBarItem(
-                            selected = tab == 0,
-                            onClick = { tab = 0 },
-                            icon = { Icon(Icons.Default.List, contentDescription = null) },
-                            label = { Text("רשימות") }
+        StockCheckTheme(data.themeMode) {
+            when {
+                settingsOpen -> SettingsScreen(
+                    themeMode = data.themeMode,
+                    onBack = { settingsOpen = false },
+                    onThemeSelected = vm::setThemeMode
+                )
+                selectedTemplate != null -> ChecklistScreen(
+                    data = data,
+                    template = selectedTemplate,
+                    vm = vm,
+                    onBack = { selectedTemplateId = null }
+                )
+                else -> Scaffold(
+                    snackbarHost = { SnackbarHost(snackbarHostState) },
+                    topBar = {
+                        ScreenTopBar(
+                            title = when (tab) {
+                                AppTab.HOME -> "בדיקת מלאי"
+                                AppTab.LISTS -> "רשימות"
+                                AppTab.TASKS -> "משימות"
+                            },
+                            action = {
+                                if (tab == AppTab.HOME) {
+                                    IconButton(onClick = { settingsOpen = true }) {
+                                        Icon(Icons.Default.Settings, "הגדרות")
+                                    }
+                                }
+                            }
                         )
-                        NavigationBarItem(
-                            selected = tab == 1,
-                            onClick = { tab = 1 },
-                            icon = { Icon(Icons.Default.ShoppingCart, contentDescription = null) },
-                            label = { Text("קניות") }
-                        )
+                    },
+                    bottomBar = {
+                        NavigationBar {
+                            NavigationBarItem(
+                                selected = tab == AppTab.HOME,
+                                onClick = { tabName = AppTab.HOME.name },
+                                icon = { Icon(Icons.Default.Home, null) },
+                                label = { Text("ראשי") }
+                            )
+                            NavigationBarItem(
+                                selected = tab == AppTab.LISTS,
+                                onClick = { tabName = AppTab.LISTS.name },
+                                icon = { Icon(Icons.Default.List, null) },
+                                label = { Text("רשימות") }
+                            )
+                            NavigationBarItem(
+                                selected = tab == AppTab.TASKS,
+                                onClick = { tabName = AppTab.TASKS.name },
+                                icon = { Icon(Icons.Default.CheckCircle, null) },
+                                label = { Text("משימות") }
+                            )
+                        }
+                    }
+                ) { padding ->
+                    when (tab) {
+                        AppTab.HOME -> HomeScreen(data, vm, { id ->
+                            selectedTemplateId = id
+                        }, { tabName = AppTab.TASKS.name }, Modifier.padding(padding))
+                        AppTab.LISTS -> ListsScreen(data, vm, { id ->
+                            selectedTemplateId = id
+                        }, Modifier.padding(padding))
+                        AppTab.TASKS -> TasksScreen(data, vm, Modifier.padding(padding))
                     }
                 }
-            ) { padding ->
-                if (tab == 0) InventoryScreen(data, vm, Modifier.padding(padding))
-                else ShoppingScreen(data, vm, Modifier.padding(padding))
             }
         }
     }
 }
 
 @Composable
-private fun InventoryScreen(data: AppData, vm: StockViewModel, modifier: Modifier) {
-    var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
-    var search by rememberSaveable { mutableStateOf("") }
-    var showAdd by remember { mutableStateOf(false) }
+private fun HomeScreen(
+    data: AppData,
+    vm: StockViewModel,
+    openTemplate: (String) -> Unit,
+    openTasks: () -> Unit,
+    modifier: Modifier
+) {
+    val openCount = data.tasks.count { !it.completed }
+    val primaryTemplate = data.templates.firstOrNull()
 
-    val selected = data.templates.firstOrNull { it.id == selectedId }
-    if (selected != null) {
-        InventoryDetail(data, selected, vm, { selectedId = null }, modifier)
-        return
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(AppSpacing.screen),
+        verticalArrangement = Arrangement.spacedBy(AppSpacing.section)
+    ) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("מה צריך לעשות?", style = MaterialTheme.typography.headlineMedium)
+                Text(
+                    if (openCount == 0) "אפשר להתחיל בדיקה חדשה."
+                    else openCount.toString() + " משימות פתוחות.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        item {
+            PrimaryActionCard(
+                title = "התחל בדיקת מלאי",
+                subtitle = "בדיקה רציפה, סימון מהיר, ושמירה אוטומטית.",
+                icon = { Icon(Icons.Default.PlayArrow, null) },
+                onClick = { primaryTemplate?.let { openTemplate(it.id) } }
+            )
+        }
+
+        item {
+            AppSectionTitle(
+                title = "משימות פתוחות",
+                actionLabel = if (openCount > 0) "הצג הכול" else null,
+                onAction = openTasks
+            )
+        }
+
+        val tasks = data.tasks.filter { !it.completed }.take(4)
+        if (tasks.isEmpty()) {
+            item { EmptyState("אין משימות פתוחות", "פריטים שיסומנו כחסרים יופיעו כאן.") }
+        } else {
+            items(tasks, key = { ShoppingLogic.normalizeName(it.name) }) { task ->
+                TaskRow(
+                    task = task,
+                    onToggle = { vm.toggleTask(task.name) },
+                    compact = true
+                )
+            }
+        }
+
+        item { AppSectionTitle("רשימות מהירות") }
+
+        if (data.templates.isEmpty()) {
+            item { EmptyState("אין רשימות עדיין", "צרו רשימה ראשונה כדי להתחיל.") }
+        } else {
+            items(data.templates.take(3), key = { it.id }) { template ->
+                TemplateRow(
+                    template = template,
+                    onClick = { openTemplate(template.id) },
+                    onEdit = {},
+                    onDuplicate = {},
+                    onDelete = {}
+                )
+            }
+        }
     }
+}
+
+@Composable
+private fun ListsScreen(
+    data: AppData,
+    vm: StockViewModel,
+    openTemplate: (String) -> Unit,
+    modifier: Modifier
+) {
+    var search by rememberSaveable { mutableStateOf("") }
+    var addDialog by remember { mutableStateOf(false) }
+    var renameTemplate by remember { mutableStateOf<Template?>(null) }
+    var deleteTemplate by remember { mutableStateOf<Template?>(null) }
 
     val filtered = data.templates.filter { it.name.contains(search.trim(), ignoreCase = true) }
 
-    Column(modifier.fillMaxSize().padding(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            OutlinedTextField(
+    Box(modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
+            AppTextField(
+                label = "חיפוש",
                 value = search,
                 onValueChange = { search = it },
-                modifier = Modifier.weight(1f),
-                label = { Text("חיפוש רשימה") },
-                singleLine = true,
-                trailingIcon = { if (search.isNotEmpty()) IconButton(onClick = { search = "" }) { Icon(Icons.Default.Clear, "ניקוי חיפוש") } }
+                modifier = Modifier.padding(horizontal = AppSpacing.screen, vertical = 8.dp),
+                placeholder = "חיפוש רשימה"
             )
-            Spacer(Modifier.width(8.dp))
-            IconButton(onClick = { showAdd = true }) {
-                Icon(Icons.Default.Add, contentDescription = "הוספת רשימה")
-            }
-        }
 
-        Spacer(Modifier.height(12.dp))
-
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(filtered, key = { it.id }) { template ->
-                Card(onClick = { selectedId = template.id }, modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(template.name, fontSize = 18.sp)
-                            Text(
-                                "${template.items.size} פריטים",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Icon(Icons.Default.ChevronLeft, contentDescription = null)
+            LazyColumn(
+                contentPadding = PaddingValues(horizontal = AppSpacing.screen, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                items(filtered, key = { it.id }) { template ->
+                    TemplateRow(
+                        template = template,
+                        onClick = { openTemplate(template.id) },
+                        onEdit = { renameTemplate = template },
+                        onDuplicate = { vm.duplicateTemplate(template.id) },
+                        onDelete = { deleteTemplate = template }
+                    )
+                }
+                if (filtered.isEmpty()) {
+                    item {
+                        EmptyState(
+                            if (search.isBlank()) "אין רשימות עדיין" else "אין תוצאות",
+                            if (search.isBlank()) "צרו רשימה ראשונה כדי להתחיל." else "נסו מונח חיפוש אחר."
+                        )
                     }
                 }
             }
         }
+
+        FloatingActionButton(
+            onClick = { addDialog = true },
+            modifier = Modifier.align(Alignment.BottomStart).padding(20.dp)
+        ) {
+            Icon(Icons.Default.Add, "הוספת רשימה")
+        }
     }
 
-    if (showAdd) {
-        TextInputDialog(
-            title = "רשימה חדשה",
-            label = "שם הרשימה",
-            initial = "",
-            onConfirm = { value ->
-                if (value.isNotBlank()) vm.addTemplate(value)
-                showAdd = false
+    if (addDialog) {
+        TextInputDialog("רשימה חדשה", "שם הרשימה", "", {
+            if (it.isNotBlank()) vm.addTemplate(it)
+            addDialog = false
+        }, { addDialog = false })
+    }
+
+    renameTemplate?.let { template ->
+        TextInputDialog("שינוי שם הרשימה", "שם הרשימה", template.name, {
+            if (it.isNotBlank()) vm.renameTemplate(template.id, it)
+            renameTemplate = null
+        }, { renameTemplate = null })
+    }
+
+    deleteTemplate?.let { template ->
+        ConfirmDialog(
+            "למחוק את הרשימה?",
+            "הפריטים והסימונים של הרשימה יימחקו.",
+            "מחיקה",
+            {
+                vm.deleteTemplate(template.id)
+                deleteTemplate = null
             },
-            onDismiss = { showAdd = false }
+            { deleteTemplate = null }
         )
     }
 }
 
 @Composable
-private fun InventoryDetail(
+private fun ChecklistScreen(
     data: AppData,
     template: Template,
     vm: StockViewModel,
-    onBack: () -> Unit,
-    modifier: Modifier
+    onBack: () -> Unit
 ) {
-    var newItem by rememberSaveable(template.id) { mutableStateOf("") }
-    var showRename by remember { mutableStateOf(false) }
-    var editingItem by remember { mutableStateOf<ChecklistItem?>(null) }
+    var addDialog by remember { mutableStateOf(false) }
+    var editItem by remember { mutableStateOf<ChecklistItem?>(null) }
+    var renameDialog by remember { mutableStateOf(false) }
+    var deleteDialog by remember { mutableStateOf(false) }
 
-    Column(modifier.fillMaxSize().padding(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            TextButton(onClick = onBack) { Text("חזרה") }
-            Spacer(Modifier.width(4.dp))
-            Text(template.name, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
-            IconButton(onClick = { showRename = true }) {
-                Icon(Icons.Default.Edit, contentDescription = "שינוי שם הרשימה")
-            }
-            IconButton(onClick = { vm.duplicateTemplate(template.id) }) {
-                Icon(Icons.Default.ContentCopy, contentDescription = "שכפול רשימה")
+    val checked = template.items.count {
+        data.checks[ShoppingLogic.checkKey(template.id, it.id)] != null &&
+            data.checks[ShoppingLogic.checkKey(template.id, it.id)] != ShoppingLogic.NOT_CHECKED
+    }
+    val progress = if (template.items.isEmpty()) 0f else checked.toFloat() / template.items.size
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(template.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "חזרה") }
+                },
+                actions = {
+                    var menu by remember { mutableStateOf(false) }
+                    IconButton(onClick = { menu = true }) {
+                        Icon(Icons.Default.MoreVert, "פעולות")
+                    }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("שינוי שם") },
+                            onClick = { menu = false; renameDialog = true },
+                            leadingIcon = { Icon(Icons.Default.Edit, null) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("שכפול") },
+                            onClick = { menu = false; vm.duplicateTemplate(template.id) },
+                            leadingIcon = { Icon(Icons.Default.ContentCopy, null) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("מחיקה") },
+                            onClick = { menu = false; deleteDialog = true },
+                            leadingIcon = { Icon(Icons.Default.Delete, null) }
+                        )
+                    }
+                }
+            )
+        },
+        bottomBar = {
+            Box(
+                Modifier
+                    .navigationBarsPadding()
+                    .padding(horizontal = AppSpacing.screen, vertical = 12.dp)
+            ) {
+                Button(
+                    onClick = { addDialog = true },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)
+                ) {
+                    Icon(Icons.Default.Add, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("הוסף פריט")
+                }
             }
         }
+    ) { padding ->
+        Column(Modifier.padding(padding).fillMaxSize()) {
+            Column(
+                Modifier.padding(horizontal = AppSpacing.screen, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        checked.toString() + "/" + template.items.size + " נבדקו",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text((progress * 100).toInt().toString() + "%", style = MaterialTheme.typography.labelLarge)
+                }
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
 
-        LazyColumn(
-            modifier = Modifier.weight(1f),
+            if (template.items.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    EmptyState("הרשימה ריקה", "הוסיפו פריט כדי להתחיל.")
+                }
+            } else {
+                LazyColumn(
+                    contentPadding = PaddingValues(horizontal = AppSpacing.screen, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(template.items, key = { it.id }) { item ->
+                        val status = data.checks[
+                            ShoppingLogic.checkKey(template.id, item.id)
+                        ] ?: ShoppingLogic.NOT_CHECKED
+
+                        InventoryItemRow(
+                            item = item,
+                            status = status,
+                            onStatus = { vm.setCheck(template.id, item.id, it) },
+                            onEdit = { editItem = item },
+                            onDelete = { vm.removeItem(template.id, item.id) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (addDialog) {
+        TextInputDialog("פריט חדש", "שם הפריט", "", {
+            if (it.isNotBlank()) vm.addItem(template.id, it)
+            addDialog = false
+        }, { addDialog = false })
+    }
+
+    if (renameDialog) {
+        TextInputDialog("שינוי שם הרשימה", "שם הרשימה", template.name, {
+            if (it.isNotBlank()) vm.renameTemplate(template.id, it)
+            renameDialog = false
+        }, { renameDialog = false })
+    }
+
+    editItem?.let { item ->
+        TextInputDialog("עריכת פריט", "שם הפריט", item.name, {
+            if (it.isNotBlank()) vm.renameItem(template.id, item.id, it)
+            editItem = null
+        }, { editItem = null })
+    }
+
+    if (deleteDialog) {
+        ConfirmDialog(
+            "למחוק את הרשימה?",
+            "הפריטים והסימונים של הרשימה יימחקו.",
+            "מחיקה",
+            {
+                vm.deleteTemplate(template.id)
+                deleteDialog = false
+                onBack()
+            },
+            { deleteDialog = false }
+        )
+    }
+}
+
+@Composable
+private fun InventoryItemRow(
+    item: ChecklistItem,
+    status: String,
+    onStatus: (String) -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            Modifier.fillMaxWidth().padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(template.items, key = { it.id }) { item ->
-                val status = data.checks[ShoppingLogic.checkKey(template.id, item.id)] ?: ShoppingLogic.NOT_CHECKED
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(item.name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                            IconButton(onClick = { editingItem = item }) {
-                                Icon(Icons.Default.Edit, contentDescription = "שינוי שם פריט")
-                            }
-                            IconButton(onClick = { vm.removeItem(template.id, item.id) }) {
-                                Icon(Icons.Default.Delete, contentDescription = "מחיקת פריט")
-                            }
-                        }
-
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            StatusButton("יש", status == ShoppingLogic.PRESENT) {
-                                vm.setCheck(template.id, item.id, ShoppingLogic.PRESENT)
-                            }
-                            StatusButton("חסר", status == ShoppingLogic.MISSING) {
-                                vm.setCheck(template.id, item.id, ShoppingLogic.MISSING)
-                            }
-                            StatusButton("לא נבדק", status == ShoppingLogic.NOT_CHECKED) {
-                                vm.setCheck(template.id, item.id, ShoppingLogic.NOT_CHECKED)
-                            }
-                        }
-                    }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(item.name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                IconButton(onClick = onEdit) { Icon(Icons.Default.Edit, "עריכת פריט") }
+                IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, "מחיקת פריט") }
+            }
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                StatusChip("יש", status == ShoppingLogic.PRESENT) {
+                    onStatus(ShoppingLogic.PRESENT)
+                }
+                StatusChip("חסר", status == ShoppingLogic.MISSING) {
+                    onStatus(ShoppingLogic.MISSING)
+                }
+                StatusChip("לא נבדק", status == ShoppingLogic.NOT_CHECKED) {
+                    onStatus(ShoppingLogic.NOT_CHECKED)
                 }
             }
         }
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = newItem,
-                onValueChange = { newItem = it },
-                modifier = Modifier.weight(1f),
-                label = { Text("פריט חדש") },
-                singleLine = true
-            )
-            IconButton(onClick = {
-                if (newItem.isNotBlank()) {
-                    vm.addItem(template.id, newItem)
-                    newItem = ""
-                }
-            }) {
-                Icon(Icons.Default.Add, contentDescription = "הוספת פריט")
-            }
-        }
-
-        TextButton(onClick = { vm.deleteTemplate(template.id); onBack() }) {
-            Text("מחיקת רשימה")
-        }
-    }
-
-    if (showRename) {
-        TextInputDialog(
-            title = "שינוי שם הרשימה",
-            label = "שם הרשימה",
-            initial = template.name,
-            onConfirm = { value ->
-                if (value.isNotBlank()) vm.renameTemplate(template.id, value)
-                showRename = false
-            },
-            onDismiss = { showRename = false }
-        )
-    }
-
-    editingItem?.let { item ->
-        TextInputDialog(
-            title = "שינוי שם פריט",
-            label = "שם הפריט",
-            initial = item.name,
-            onConfirm = { value ->
-                if (value.isNotBlank()) vm.renameItem(template.id, item.id, value)
-                editingItem = null
-            },
-            onDismiss = { editingItem = null }
-        )
     }
 }
 
 @Composable
-private fun StatusButton(label: String, selected: Boolean, onClick: () -> Unit) {
-    if (selected) Button(onClick = onClick) { Text(label) }
-    else OutlinedButton(onClick = onClick) { Text(label) }
+private fun StatusChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Text(label) }
+    )
 }
 
 @Composable
-private fun ShoppingScreen(data: AppData, vm: StockViewModel, modifier: Modifier) {
-    var newItem by rememberSaveable { mutableStateOf("") }
+private fun TasksScreen(
+    data: AppData,
+    vm: StockViewModel,
+    modifier: Modifier
+) {
+    var newTask by rememberSaveable { mutableStateOf("") }
     var search by rememberSaveable { mutableStateOf("") }
 
-    val filtered = data.shopping.filter {
-        it.name.contains(search.trim(), ignoreCase = true) ||
-            it.sources.any { source -> source.contains(search.trim(), ignoreCase = true) }
+    val query = search.trim()
+    val filtered = data.tasks.filter {
+        it.name.contains(query, ignoreCase = true) ||
+            it.sources.any { source -> source.contains(query, ignoreCase = true) }
     }
-    val openCount = data.shopping.count { !it.purchased }
+    val open = data.tasks.count { !it.completed }
+    val done = data.tasks.count { it.completed }
 
-    Column(modifier.fillMaxSize().padding(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("רשימת קניות", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
-            Text("${openCount} לקנייה", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Column(modifier.fillMaxSize()) {
+        AppTextField(
+            label = "הוספת משימה",
+            value = newTask,
+            onValueChange = { newTask = it },
+            modifier = Modifier.padding(horizontal = AppSpacing.screen, vertical = 8.dp),
+            placeholder = "מה צריך לעשות?"
+        )
+
+        Row(
+            Modifier.padding(horizontal = AppSpacing.screen),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Button(
+                onClick = {
+                    if (newTask.isNotBlank()) {
+                        vm.addTask(newTask)
+                        newTask = ""
+                    }
+                },
+                enabled = newTask.isNotBlank(),
+                modifier = Modifier.heightIn(min = 48.dp)
+            ) {
+                Text("הוספה")
+            }
+            Spacer(Modifier.width(10.dp))
+            Text(open.toString() + " פתוחות", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (done > 0) {
+                Spacer(Modifier.width(10.dp))
+                Text(done.toString() + " הושלמו", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
 
-        Spacer(Modifier.height(8.dp))
+        AppTextField(
+            label = "חיפוש",
+            value = search,
+            onValueChange = { search = it },
+            modifier = Modifier.padding(horizontal = AppSpacing.screen, vertical = 8.dp),
+            placeholder = "חיפוש משימה"
+        )
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = newItem,
-                onValueChange = { newItem = it },
-                modifier = Modifier.weight(1f),
-                label = { Text("הוספת פריט") },
-                singleLine = true
-            )
-            IconButton(onClick = {
-                if (newItem.isNotBlank()) {
-                    vm.addShopping(newItem)
-                    newItem = ""
+        if (filtered.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                EmptyState(
+                    if (query.isBlank()) "אין משימות" else "אין תוצאות",
+                    if (query.isBlank()) "פריטים שיסומנו כחסרים יופיעו כאן." else "נסו חיפוש אחר."
+                )
+            }
+        } else {
+            LazyColumn(
+                contentPadding = PaddingValues(horizontal = AppSpacing.screen, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                items(filtered, key = { ShoppingLogic.normalizeName(it.name) }) { task ->
+                    TaskRow(
+                        task = task,
+                        onToggle = { vm.toggleTask(task.name) },
+                        onDelete = { vm.removeTask(task.name) },
+                        showDelete = task.manual
+                    )
                 }
-            }) {
-                Icon(Icons.Default.Add, contentDescription = "הוספת פריט")
             }
         }
+    }
+}
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = search,
-                onValueChange = { search = it },
-                modifier = Modifier.weight(1f),
-                label = { Text("חיפוש") },
-                singleLine = true,
-                trailingIcon = { if (search.isNotEmpty()) IconButton(onClick = { search = "" }) { Icon(Icons.Default.Clear, "ניקוי חיפוש") } }
+@Composable
+private fun TaskRow(
+    task: TaskItem,
+    onToggle: () -> Unit,
+    compact: Boolean = false,
+    onDelete: () -> Unit = {},
+    showDelete: Boolean = false
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.background,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth().alpha(if (task.completed) 0.55f else 1f)
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = if (compact) 6.dp else 9.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Checkbox(
+                checked = task.completed,
+                onCheckedChange = { onToggle() }
             )
-            Spacer(Modifier.width(4.dp))
-            IconButton(onClick = vm::refreshShopping) {
-                Icon(Icons.Default.Refresh, contentDescription = "רענון")
+            Column(Modifier.weight(1f)) {
+                Text(task.name, style = MaterialTheme.typography.titleMedium)
+                if (task.sources.size > 1) {
+                    Text(
+                        "מגיע מ־" + task.sources.joinToString(", "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
-            TextButton(onClick = vm::clearPurchased) {
-                Text("נקה שנקנו")
+            if (showDelete) {
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Default.Delete, "מחיקת משימה")
+                }
             }
         }
+    }
+}
 
-        Spacer(Modifier.height(8.dp))
-
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(data.shopping.filter { item ->
-                item.name.contains(search.trim(), ignoreCase = true) ||
-                    item.sources.any { source -> source.contains(search.trim(), ignoreCase = true) }
-            }, key = { ShoppingLogic.normalizeName(it.name) }) { item ->
-                Card(Modifier.fillMaxWidth()) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(
-                            checked = item.purchased,
-                            onCheckedChange = { vm.togglePurchased(item.name) }
-                        )
-                        Column(Modifier.weight(1f)) {
-                            Text(item.name, style = MaterialTheme.typography.titleMedium)
-                            if (item.sources.isNotEmpty()) {
-                                Text(
-                                    "מקור: ${item.sources.joinToString(", ")}",
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                        if (item.manual) {
-                            Text("ידני", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Spacer(Modifier.width(6.dp))
-                        }
-                        IconButton(onClick = { vm.removeShopping(item.name) }) {
-                            Icon(Icons.Default.Delete, contentDescription = "מחיקת פריט")
-                        }
+@Composable
+private fun SettingsScreen(
+    themeMode: String,
+    onBack: () -> Unit,
+    onThemeSelected: (String) -> Unit
+) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("הגדרות") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, "חזרה")
                     }
                 }
-            }
+            )
+        }
+    ) { padding ->
+        Column(
+            Modifier.padding(padding).fillMaxSize().padding(AppSpacing.screen),
+            verticalArrangement = Arrangement.spacedBy(20.dp)
+        ) {
+            Text("ערכת נושא", style = MaterialTheme.typography.titleLarge)
+            ThemeChoice("מערכת", ThemeMode.SYSTEM, themeMode, onThemeSelected)
+            ThemeChoice("בהיר", ThemeMode.LIGHT, themeMode, onThemeSelected)
+            ThemeChoice("כהה", ThemeMode.DARK, themeMode, onThemeSelected)
+            HorizontalDivider()
+            Text("אודות", style = MaterialTheme.typography.titleLarge)
+            Text(
+                "בדיקת מלאי\nגרסה 1.0",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun ThemeChoice(
+    label: String,
+    value: String,
+    selected: String,
+    onSelected: (String) -> Unit
+) {
+    Surface(
+        onClick = { onSelected(value) },
+        shape = RoundedCornerShape(14.dp),
+        color = if (selected == value) {
+            MaterialTheme.colorScheme.secondaryContainer
+        } else {
+            MaterialTheme.colorScheme.surface
+        }
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            RadioButton(
+                selected = selected == value,
+                onClick = { onSelected(value) }
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(label, style = MaterialTheme.typography.bodyLarge)
         }
     }
 }
@@ -492,11 +828,11 @@ private fun TextInputDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            OutlinedTextField(
+            AppTextField(
+                label = label,
                 value = value,
                 onValueChange = { value = it },
-                label = { Text(label) },
-                singleLine = true
+                modifier = Modifier.fillMaxWidth()
             )
         },
         confirmButton = {
@@ -505,5 +841,22 @@ private fun TextInputDialog(
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("ביטול") }
         }
+    )
+}
+
+@Composable
+private fun ConfirmDialog(
+    title: String,
+    message: String,
+    confirmLabel: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(message) },
+        confirmButton = { TextButton(onClick = onConfirm) { Text(confirmLabel) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("ביטול") } }
     )
 }

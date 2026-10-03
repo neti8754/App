@@ -44,7 +44,7 @@ object ThemeMode {
 fun defaultTemplates() = listOf(
     Template(name = "מקלחת", items = listOf("שמפו", "סבון", "משחת שיניים", "נייר טואלט").map { ChecklistItem(name = it) }),
     Template(name = "שבת", items = listOf("חלה", "יין", "נרות שבת", "דגים", "שתייה").map { ChecklistItem(name = it) }),
-    Template(name = "קניות לבית", items = listOf("לחם", "חלב", "ביצים", "ירקות", "פירות").map { ChecklistItem(name = it) }),
+    Template(name = "סידורים לבית", items = listOf("לחם", "חלב", "ביצים", "ירקות", "פירות").map { ChecklistItem(name = it) }),
     Template(name = "נסיעה", items = listOf("מטען", "בקבוק מים", "תעודה מזהה", "תרופות").map { ChecklistItem(name = it) }),
     Template(name = "ניקיון", items = listOf("נוזל רצפות", "ספוגים", "שקיות אשפה", "נייר מגבת").map { ChecklistItem(name = it) })
 )

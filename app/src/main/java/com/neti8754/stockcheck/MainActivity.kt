@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -168,6 +169,8 @@ class StockViewModel(private val repo: Repository) : ViewModel() {
 
     fun setThemeMode(mode: String) = update { old -> old.copy(themeMode = mode) }
 
+    fun setAccentColor(color: String) = update { old -> old.copy(accentColor = color) }
+
     companion object {
         fun factory(context: android.content.Context) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
@@ -182,6 +185,7 @@ class StockViewModel(private val repo: Repository) : ViewModel() {
 }
 
 private enum class AppTab { HOME, LISTS, TASKS }
+private enum class TaskFilter { OPEN, ALL, COMPLETED }
 
 @Composable
 fun StockCheckApp(vm: StockViewModel) {
@@ -199,12 +203,14 @@ fun StockCheckApp(vm: StockViewModel) {
     }
 
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-        StockCheckTheme(data.themeMode) {
+        StockCheckTheme(data.themeMode, data.accentColor) {
             when {
                 settingsOpen -> SettingsScreen(
                     themeMode = data.themeMode,
+                    accentColor = data.accentColor,
                     onBack = { settingsOpen = false },
-                    onThemeSelected = vm::setThemeMode
+                    onThemeSelected = vm::setThemeMode,
+                    onAccentSelected = vm::setAccentColor
                 )
                 selectedTemplate != null -> ChecklistScreen(
                     data = data,
@@ -441,8 +447,8 @@ private fun ChecklistScreen(
     var deleteDialog by remember { mutableStateOf(false) }
 
     val checked = template.items.count {
-        data.checks[ShoppingLogic.checkKey(template.id, it.id)] != null &&
-            data.checks[ShoppingLogic.checkKey(template.id, it.id)] != ShoppingLogic.NOT_CHECKED
+        val status = data.checks[ShoppingLogic.checkKey(template.id, it.id)]
+        status == ShoppingLogic.PRESENT || status == ShoppingLogic.MISSING
     }
     val progress = if (template.items.isEmpty()) 0f else checked.toFloat() / template.items.size
 
@@ -527,7 +533,7 @@ private fun ChecklistScreen(
                     items(template.items, key = { it.id }) { item ->
                         val status = data.checks[
                             ShoppingLogic.checkKey(template.id, item.id)
-                        ] ?: ShoppingLogic.NOT_CHECKED
+                        ] ?: ""
 
                         InventoryItemRow(
                             item = item,
@@ -610,9 +616,6 @@ private fun InventoryItemRow(
                 StatusChip("חסר", status == ShoppingLogic.MISSING) {
                     onStatus(ShoppingLogic.MISSING)
                 }
-                StatusChip("לא נבדק", status == ShoppingLogic.NOT_CHECKED) {
-                    onStatus(ShoppingLogic.NOT_CHECKED)
-                }
             }
         }
     }
@@ -635,12 +638,23 @@ private fun TasksScreen(
 ) {
     var newTask by rememberSaveable { mutableStateOf("") }
     var search by rememberSaveable { mutableStateOf("") }
+    var filterName by rememberSaveable { mutableStateOf(TaskFilter.OPEN.name) }
 
+    val filter = TaskFilter.valueOf(filterName)
     val query = search.trim()
-    val filtered = data.tasks.filter {
-        it.name.contains(query, ignoreCase = true) ||
-            it.sources.any { source -> source.contains(query, ignoreCase = true) }
-    }
+    val filtered = data.tasks
+        .filter {
+            it.name.contains(query, ignoreCase = true) ||
+                it.sources.any { source -> source.contains(query, ignoreCase = true) }
+        }
+        .filter {
+            when (filter) {
+                TaskFilter.OPEN -> !it.completed
+                TaskFilter.ALL -> true
+                TaskFilter.COMPLETED -> it.completed
+            }
+        }
+        .sortedWith(compareBy<TaskItem> { it.completed }.thenBy { it.name.lowercase() })
     val open = data.tasks.count { !it.completed }
     val done = data.tasks.count { it.completed }
 
@@ -684,6 +698,18 @@ private fun TasksScreen(
             modifier = Modifier.padding(horizontal = AppSpacing.screen, vertical = 8.dp),
             placeholder = "חיפוש משימה"
         )
+
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = AppSpacing.screen),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilterChoice("פתוחות", TaskFilter.OPEN, filter) { filterName = it.name }
+            FilterChoice("הכול", TaskFilter.ALL, filter) { filterName = it.name }
+            FilterChoice("הושלמו", TaskFilter.COMPLETED, filter) { filterName = it.name }
+        }
 
         if (filtered.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -733,7 +759,7 @@ private fun TaskRow(
             )
             Column(Modifier.weight(1f)) {
                 Text(task.name, style = MaterialTheme.typography.titleMedium)
-                if (task.sources.size > 1) {
+                if (task.sources.isNotEmpty()) {
                     Text(
                         "מגיע מ־" + task.sources.joinToString(", "),
                         style = MaterialTheme.typography.bodySmall,
@@ -753,9 +779,19 @@ private fun TaskRow(
 @Composable
 private fun SettingsScreen(
     themeMode: String,
+    accentColor: String,
     onBack: () -> Unit,
-    onThemeSelected: (String) -> Unit
+    onThemeSelected: (String) -> Unit,
+    onAccentSelected: (String) -> Unit
 ) {
+    val accentChoices = listOf(
+        AccentColor.GREEN to Color(0xFF10A37F),
+        AccentColor.BLUE to Color(0xFF0B57D0),
+        AccentColor.PURPLE to Color(0xFF7C4DFF),
+        AccentColor.ORANGE to Color(0xFFC75B00),
+        AccentColor.PINK to Color(0xFFB3265E)
+    )
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -768,52 +804,99 @@ private fun SettingsScreen(
             )
         }
     ) { padding ->
-        Column(
-            Modifier.padding(padding).fillMaxSize().padding(AppSpacing.screen),
-            verticalArrangement = Arrangement.spacedBy(20.dp)
+        LazyColumn(
+            Modifier
+                .padding(padding)
+                .fillMaxSize(),
+            contentPadding = PaddingValues(AppSpacing.screen),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text("ערכת נושא", style = MaterialTheme.typography.titleLarge)
-            ThemeChoice("מערכת", ThemeMode.SYSTEM, themeMode, onThemeSelected)
-            ThemeChoice("בהיר", ThemeMode.LIGHT, themeMode, onThemeSelected)
-            ThemeChoice("כהה", ThemeMode.DARK, themeMode, onThemeSelected)
-            HorizontalDivider()
-            Text("אודות", style = MaterialTheme.typography.titleLarge)
+            item { Text("ערכת נושא", style = MaterialTheme.typography.titleLarge) }
+            item { ThemeChoice("מערכת", ThemeMode.SYSTEM, themeMode, onThemeSelected) }
+            item { ThemeChoice("בהיר", ThemeMode.LIGHT, themeMode, onThemeSelected) }
+            item { ThemeChoice("כהה", ThemeMode.DARK, themeMode, onThemeSelected) }
+
+            item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
+            item { Text("צבע מודגש", style = MaterialTheme.typography.titleLarge) }
+            item {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    accentChoices.forEach { (value, color) ->
+                        AccentChoice(
+                            value = value,
+                            color = color,
+                            selected = accentColor == value,
+                            onSelected = { onAccentSelected(value) }
+                        )
+                    }
+                }
+            }
+
+            item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
+            item { Text("אודות", style = MaterialTheme.typography.titleLarge) }
+            item {
+                Text(
+                    "בדיקת מלאי\nגרסה 1.1",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AccentChoice(
+    value: String,
+    color: Color,
+    selected: Boolean,
+    onSelected: () -> Unit
+) {
+    Surface(
+        onClick = onSelected,
+        shape = RoundedCornerShape(14.dp),
+        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
+        border = if (selected) ButtonDefaults.outlinedButtonBorder else null
+    ) {
+        Column(
+            Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Surface(
+                modifier = Modifier.size(28.dp),
+                shape = RoundedCornerShape(50),
+                color = color
+            ) {}
             Text(
-                "בדיקת מלאי\nגרסה 1.0",
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                when (value) {
+                    AccentColor.BLUE -> "כחול"
+                    AccentColor.PURPLE -> "סגול"
+                    AccentColor.ORANGE -> "כתום"
+                    AccentColor.PINK -> "ורוד"
+                    else -> "ירוק"
+                },
+                style = MaterialTheme.typography.labelLarge
             )
         }
     }
 }
 
 @Composable
-private fun ThemeChoice(
+private fun FilterChoice(
     label: String,
-    value: String,
-    selected: String,
-    onSelected: (String) -> Unit
+    value: TaskFilter,
+    selected: TaskFilter,
+    onSelected: (TaskFilter) -> Unit
 ) {
-    Surface(
+    FilterChip(
+        selected = selected == value,
         onClick = { onSelected(value) },
-        shape = RoundedCornerShape(14.dp),
-        color = if (selected == value) {
-            MaterialTheme.colorScheme.secondaryContainer
-        } else {
-            MaterialTheme.colorScheme.surface
-        }
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            RadioButton(
-                selected = selected == value,
-                onClick = { onSelected(value) }
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(label, style = MaterialTheme.typography.bodyLarge)
-        }
-    }
+        label = { Text(label) }
+    )
 }
 
 @Composable

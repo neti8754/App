@@ -6,6 +6,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 import com.neti8754.stockcheck.ThemeMode
 
 private val LightColors = lightColorScheme(
@@ -91,7 +92,7 @@ val StockTypography = androidx.compose.material3.Typography(
 )
 
 val StockShapes = androidx.compose.material3.Shapes(
-    small = androidx.compose.foundation.shape.RoundedCornerShape(12),
-    medium = androidx.compose.foundation.shape.RoundedCornerShape(16),
-    large = androidx.compose.foundation.shape.RoundedCornerShape(20)
+    small = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+    medium = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+    large = androidx.compose.foundation.shape.RoundedCornerShape(20.dp)
 )

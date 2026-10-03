@@ -899,6 +899,36 @@ private fun FilterChoice(
 }
 
 @Composable
+private fun ThemeChoice(
+    label: String,
+    value: String,
+    selected: String,
+    onSelected: (String) -> Unit
+) {
+    Surface(
+        onClick = { onSelected(value) },
+        shape = RoundedCornerShape(14.dp),
+        color = if (selected == value) {
+            MaterialTheme.colorScheme.secondaryContainer
+        } else {
+            MaterialTheme.colorScheme.surface
+        }
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            RadioButton(
+                selected = selected == value,
+                onClick = { onSelected(value) }
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(label, style = MaterialTheme.typography.bodyLarge)
+        }
+    }
+}
+
+@Composable
 private fun TextInputDialog(
     title: String,
     label: String,

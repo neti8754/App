@@ -59,7 +59,6 @@ fun defaultTemplates() = listOf(
 )
 
 object ShoppingLogic {
-    const val NOT_CHECKED = "not_checked"
     const val PRESENT = "present"
     const val MISSING = "missing"
 

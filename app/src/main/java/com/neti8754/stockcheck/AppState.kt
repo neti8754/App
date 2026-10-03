@@ -32,13 +32,22 @@ data class AppData(
     val checks: Map<String, String> = emptyMap(),
     @SerialName("shopping")
     val tasks: List<TaskItem> = emptyList(),
-    val themeMode: String = ThemeMode.SYSTEM
+    val themeMode: String = ThemeMode.SYSTEM,
+    val accentColor: String = AccentColor.GREEN
 )
 
 object ThemeMode {
     const val SYSTEM = "system"
     const val LIGHT = "light"
     const val DARK = "dark"
+}
+
+object AccentColor {
+    const val GREEN = "green"
+    const val BLUE = "blue"
+    const val PURPLE = "purple"
+    const val ORANGE = "orange"
+    const val PINK = "pink"
 }
 
 fun defaultTemplates() = listOf(

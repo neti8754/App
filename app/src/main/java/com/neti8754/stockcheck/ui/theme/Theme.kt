@@ -7,6 +7,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.neti8754.stockcheck.ThemeMode
 
 private val LightColors = lightColorScheme(
@@ -61,33 +62,33 @@ fun StockCheckTheme(themeMode: String, content: @Composable () -> Unit) {
 
 val StockTypography = androidx.compose.material3.Typography(
     headlineMedium = androidx.compose.ui.text.TextStyle(
-        fontSize = androidx.compose.ui.unit.sp(24),
+        fontSize = 24.sp,
         fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
     ),
     headlineSmall = androidx.compose.ui.text.TextStyle(
-        fontSize = androidx.compose.ui.unit.sp(20),
+        fontSize = 20.sp,
         fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
     ),
     titleLarge = androidx.compose.ui.text.TextStyle(
-        fontSize = androidx.compose.ui.unit.sp(18),
+        fontSize = 18.sp,
         fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
     ),
     titleMedium = androidx.compose.ui.text.TextStyle(
-        fontSize = androidx.compose.ui.unit.sp(16),
+        fontSize = 16.sp,
         fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
     ),
     bodyLarge = androidx.compose.ui.text.TextStyle(
-        fontSize = androidx.compose.ui.unit.sp(16)
+        fontSize = 16.sp
     ),
     bodyMedium = androidx.compose.ui.text.TextStyle(
-        fontSize = androidx.compose.ui.unit.sp(14)
+        fontSize = 14.sp
     ),
     labelLarge = androidx.compose.ui.text.TextStyle(
-        fontSize = androidx.compose.ui.unit.sp(14),
+        fontSize = 14.sp,
         fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
     ),
     labelSmall = androidx.compose.ui.text.TextStyle(
-        fontSize = androidx.compose.ui.unit.sp(12)
+        fontSize = 12.sp
     )
 )
 

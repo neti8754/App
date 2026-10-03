@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class ShoppingLogicTest {
+class TaskLogicTest {
     @Test
     fun missingItemsAreDeduplicatedAndKeepSources() {
         val aItem = ChecklistItem(id = "a1", name = "חלב")
@@ -22,34 +22,34 @@ class ShoppingLogicTest {
             )
         )
 
-        val result = ShoppingLogic.rebuildShopping(data)
+        val result = ShoppingLogic.rebuildTasks(data)
 
         assertEquals(2, result.size)
         assertEquals(setOf("שבת", "בית"), result.first { ShoppingLogic.normalizeName(it.name) == "חלב" }.sources.toSet())
     }
 
     @Test
-    fun presentItemsDoNotEnterShoppingList() {
+    fun presentItemsDoNotEnterTasks() {
         val item = ChecklistItem(id = "a1", name = "חלב")
         val t = Template(id = "a", name = "בית", items = listOf(item))
         val data = AppData(
             templates = listOf(t),
             checks = mapOf(ShoppingLogic.checkKey("a", "a1") to ShoppingLogic.PRESENT)
         )
-        assertEquals(0, ShoppingLogic.rebuildShopping(data).size)
+        assertEquals(0, ShoppingLogic.rebuildTasks(data).size)
     }
 
     @Test
-    fun manualShoppingItemsSurviveAutomaticRefresh() {
+    fun manualTaskItemsSurviveAutomaticRefresh() {
         val item = ChecklistItem(id = "a1", name = "חלב")
         val t = Template(id = "a", name = "בית", items = listOf(item))
         val data = AppData(
             templates = listOf(t),
             checks = mapOf(ShoppingLogic.checkKey("a", "a1") to ShoppingLogic.MISSING),
-            shopping = listOf(ShoppingItem(name = "בטריות", manual = true))
+            tasks = listOf(TaskItem(name = "בטריות", manual = true))
         )
 
-        val result = ShoppingLogic.rebuildShopping(data)
+        val result = ShoppingLogic.rebuildTasks(data)
 
         assertTrue(result.any { ShoppingLogic.normalizeName(it.name) == "בטריות" && it.manual })
         assertTrue(result.any { ShoppingLogic.normalizeName(it.name) == "חלב" })
@@ -66,7 +66,7 @@ class ShoppingLogicTest {
         )
 
         val afterRemoval = template.copy(items = listOf(second))
-        val result = ShoppingLogic.rebuildShopping(data.copy(templates = listOf(afterRemoval)))
+        val result = ShoppingLogic.rebuildTasks(data.copy(templates = listOf(afterRemoval)))
 
         assertEquals(listOf("חלב"), result.map { it.name })
     }

@@ -55,7 +55,9 @@ class StockViewModel(private val repo: Repository) : ViewModel() {
     private val eventChannel = Channel<String>(Channel.BUFFERED)
     val events = eventChannel.receiveAsFlow()
 
-    private fun update(transform: (AppData) -> AppData, message: String? = null) = scope.launch {
+    private fun update(transform: (AppData) -> AppData) = update(transform, null)
+
+    private fun update(transform: (AppData) -> AppData, message: String?) = scope.launch {
         updateMutex.withLock {
             val next = transform(data.first())
             repo.save(next)

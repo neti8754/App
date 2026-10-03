@@ -31,8 +31,15 @@ data class AppData(
     val templates: List<Template> = defaultTemplates(),
     val checks: Map<String, String> = emptyMap(),
     @SerialName("shopping")
-    val tasks: List<TaskItem> = emptyList()
+    val tasks: List<TaskItem> = emptyList(),
+    val themeMode: String = ThemeMode.SYSTEM
 )
+
+object ThemeMode {
+    const val SYSTEM = "system"
+    const val LIGHT = "light"
+    const val DARK = "dark"
+}
 
 fun defaultTemplates() = listOf(
     Template(name = "מקלחת", items = listOf("שמפו", "סבון", "משחת שיניים", "נייר טואלט").map { ChecklistItem(name = it) }),

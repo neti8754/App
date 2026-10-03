@@ -859,7 +859,6 @@ private fun AccentChoice(
         onClick = onSelected,
         shape = RoundedCornerShape(14.dp),
         color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
-        border = if (selected) ButtonDefaults.outlinedButtonBorder else null
     ) {
         Column(
             Modifier.padding(horizontal = 14.dp, vertical = 10.dp),

@@ -1,5 +1,6 @@
 package com.neti8754.stockcheck
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.util.UUID
 
@@ -17,10 +18,11 @@ data class Template(
 )
 
 @Serializable
-data class ShoppingItem(
+data class TaskItem(
     val name: String,
     val sources: List<String> = emptyList(),
-    val purchased: Boolean = false,
+    @SerialName("purchased")
+    val completed: Boolean = false,
     val manual: Boolean = false
 )
 
@@ -28,7 +30,8 @@ data class ShoppingItem(
 data class AppData(
     val templates: List<Template> = defaultTemplates(),
     val checks: Map<String, String> = emptyMap(),
-    val shopping: List<ShoppingItem> = emptyList()
+    @SerialName("shopping")
+    val tasks: List<TaskItem> = emptyList()
 )
 
 fun defaultTemplates() = listOf(
@@ -48,7 +51,7 @@ object ShoppingLogic {
 
     fun normalizeName(name: String) = name.trim().replace(Regex("\\s+"), " ").lowercase()
 
-    fun rebuildShopping(data: AppData): List<ShoppingItem> {
+    fun rebuildTasks(data: AppData): List<TaskItem> {
         val missing = linkedMapOf<String, MutableSet<String>>()
 
         data.templates.forEach { template ->
@@ -62,19 +65,19 @@ object ShoppingLogic {
             }
         }
 
-        val existing = data.shopping.associateBy { normalizeName(it.name) }
+        val existing = data.tasks.associateBy { normalizeName(it.name) }
         val rebuilt = missing.map { (normalizedName, sources) ->
             val previous = existing[normalizedName]
-            ShoppingItem(
+            TaskItem(
                 name = previous?.name ?: normalizedName,
                 sources = sources.toList(),
-                purchased = previous?.purchased ?: false,
+                completed = previous?.completed ?: false,
                 manual = previous?.manual ?: false
             )
         }
 
         val autoNames = missing.keys
-        val manualOnly = data.shopping.filter { it.manual && normalizeName(it.name) !in autoNames }
+        val manualOnly = data.tasks.filter { it.manual && normalizeName(it.name) !in autoNames }
         return rebuilt + manualOnly
     }
 

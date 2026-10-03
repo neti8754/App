@@ -8,13 +8,44 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.neti8754.stockcheck.AccentColor
 import com.neti8754.stockcheck.ThemeMode
 
-private val LightColors = lightColorScheme(
-    primary = Color(0xFF10A37F),
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFFD6F3EA),
-    onPrimaryContainer = Color(0xFF063D30),
+private data class ThemePalette(
+    val lightPrimary: Color,
+    val lightOnPrimary: Color,
+    val lightContainer: Color,
+    val lightOnContainer: Color,
+    val darkPrimary: Color,
+    val darkOnPrimary: Color,
+    val darkContainer: Color,
+    val darkOnContainer: Color
+)
+
+private fun paletteFor(accentColor: String) = when (accentColor) {
+    AccentColor.BLUE -> ThemePalette(
+        Color(0xFF0B57D0), Color.White, Color(0xFFD9E2FF), Color(0xFF001A41),
+        Color(0xFFAFC6FF), Color(0xFF002D6A), Color(0xFF184B8F), Color(0xFFD9E2FF)
+    )
+    AccentColor.PURPLE -> ThemePalette(
+        Color(0xFF7C4DFF), Color.White, Color(0xFFE9DDFF), Color(0xFF26005A),
+        Color(0xFFD1BCFF), Color(0xFF3A147A), Color(0xFF542A96), Color(0xFFE9DDFF)
+    )
+    AccentColor.ORANGE -> ThemePalette(
+        Color(0xFFC75B00), Color.White, Color(0xFFFFDCC4), Color(0xFF351000),
+        Color(0xFFFFB782), Color(0xFF4D1C00), Color(0xFF733000), Color(0xFFFFDCC4)
+    )
+    AccentColor.PINK -> ThemePalette(
+        Color(0xFFB3265E), Color.White, Color(0xFFFFD9E5), Color(0xFF3D0018),
+        Color(0xFFFFB1C9), Color(0xFF5F1735), Color(0xFF84234D), Color(0xFFFFD9E5)
+    )
+    else -> ThemePalette(
+        Color(0xFF10A37F), Color.White, Color(0xFFD6F3EA), Color(0xFF063D30),
+        Color(0xFF49C9A8), Color(0xFF00382A), Color(0xFF0A4D3C), Color(0xFFC7F5E8)
+    )
+}
+
+private val BaseLightColors = lightColorScheme(
     secondary = Color(0xFF5F6368),
     background = Color(0xFFFFFFFF),
     surface = Color(0xFFF7F7F8),
@@ -27,11 +58,7 @@ private val LightColors = lightColorScheme(
     errorContainer = Color(0xFFFDECEA)
 )
 
-private val DarkColors = darkColorScheme(
-    primary = Color(0xFF49C9A8),
-    onPrimary = Color(0xFF00382A),
-    primaryContainer = Color(0xFF0A4D3C),
-    onPrimaryContainer = Color(0xFFC7F5E8),
+private val BaseDarkColors = darkColorScheme(
     secondary = Color(0xFFB9BDC2),
     background = Color(0xFF171717),
     surface = Color(0xFF212121),
@@ -45,15 +72,35 @@ private val DarkColors = darkColorScheme(
 )
 
 @Composable
-fun StockCheckTheme(themeMode: String, content: @Composable () -> Unit) {
+fun StockCheckTheme(
+    themeMode: String,
+    accentColor: String,
+    content: @Composable () -> Unit
+) {
     val dark = when (themeMode) {
         ThemeMode.DARK -> true
         ThemeMode.LIGHT -> false
         else -> isSystemInDarkTheme()
     }
+    val palette = paletteFor(accentColor)
+    val colors = if (dark) {
+        BaseDarkColors.copy(
+            primary = palette.darkPrimary,
+            onPrimary = palette.darkOnPrimary,
+            primaryContainer = palette.darkContainer,
+            onPrimaryContainer = palette.darkOnContainer
+        )
+    } else {
+        BaseLightColors.copy(
+            primary = palette.lightPrimary,
+            onPrimary = palette.lightOnPrimary,
+            primaryContainer = palette.lightContainer,
+            onPrimaryContainer = palette.lightOnContainer
+        )
+    }
 
     MaterialTheme(
-        colorScheme = if (dark) DarkColors else LightColors,
+        colorScheme = colors,
         typography = StockTypography,
         shapes = StockShapes,
         content = content

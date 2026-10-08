@@ -138,6 +138,8 @@ def main():
             errors.append(f"Unexpectedly short shard: {title} ({len(raw)} bytes)")
             continue
         fetched += 1
+        if letter == "a":
+            print("SOURCE_DEBUG_PREFIX", repr(raw[:1800]))
         for line in raw.splitlines():
             row = parse_row(line)
             if not row:

@@ -21,7 +21,7 @@ OUT = Path("build-dict/wiktionary_en_he.json")
 REPORT = Path("build-dict/SOURCE-ATTRIBUTION.txt")
 UA = "KindleEnglishHebrewDictionary/1.0 (dictionary build; contact via repository issues)"
 HEBREW = re.compile(r"[\u0590-\u05FF]")
-ASCII_HEAD = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .,'\-!?&]{0,99}$")
+ASCII_HEAD = re.compile(r"^[A-Za-z2][A-Za-z2 .,'()\-./!?_%]{0,99}$")
 TAG = re.compile(r"\{([^{}]+)\}")
 
 def strip_wiki(s: str) -> str:
@@ -36,7 +36,7 @@ def normal_head(s: str) -> str:
     s = strip_wiki(s)
     s = re.sub(r"^(?:\*|#|:)+\s*", "", s).strip()
     s = re.sub(r"\s+", " ", s)
-    return s.strip(" \t*#")
+    return s.strip(" \t*#").replace("’", "'").replace("‘", "'")
 
 def parse_pos(left: str):
     m = re.search(r"\{([^{}]+)\}", left)

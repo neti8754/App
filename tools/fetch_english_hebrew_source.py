@@ -110,18 +110,27 @@ def main():
     redirects = {}
     fetched = 0
     errors = []
+    titles = [f"User:Matthias_Buchmeier/en-he-{letter}" for letter in "abcdefghijklmnopqrstuvwxyz"]
+    params = {
+        "action": "query", "format": "json", "formatversion": "2",
+        "prop": "revisions", "rvprop": "content", "rvslots": "main",
+        "titles": "|".join(titles),
+    }
+    response = None
+    for attempt in range(6):
+        response = sess.get(API, params=params, timeout=180)
+        if response.status_code != 429 and response.status_code < 500:
+            break
+        wait = min(30, int(response.headers.get("Retry-After", "5")) if response.headers.get("Retry-After", "").isdigit() else (3 * (attempt + 1)))
+        time.sleep(wait)
+    response.raise_for_status()
+    data = response.json()
+    pages = data.get("query", {}).get("pages", [])
+    by_title = {str(page.get("title", "")).replace(" ", "_").casefold(): page for page in pages}
     for letter in "abcdefghijklmnopqrstuvwxyz":
         title = f"User:Matthias_Buchmeier/en-he-{letter}"
-        params = {
-            "action": "query", "format": "json", "formatversion": "2",
-            "prop": "revisions", "rvprop": "content", "rvslots": "main",
-            "titles": title,
-        }
-        response = sess.get(API, params=params, timeout=90)
-        response.raise_for_status()
-        data = response.json()
-        page = data.get("query", {}).get("pages", [{}])[0]
-        if page.get("missing") or not page.get("revisions"):
+        page = by_title.get(title.casefold())
+        if not page or page.get("missing") or not page.get("revisions"):
             errors.append(f"Missing shard: {title}")
             continue
         raw = page["revisions"][0].get("slots", {}).get("main", {}).get("content", "")
@@ -143,7 +152,6 @@ def main():
                     obj["pos"].append(tag)
             if see and see.lower() not in [x.lower() for x in obj["see"]]:
                 obj["see"].append(see)
-        time.sleep(0.15)
 
     rows = []
     for word, obj in merged.items():

@@ -1,0 +1,186 @@
+name: Build Hebrew Kindle Dictionary
+
+on:
+  push:
+    branches: [tmp-kindle-hebrew-dictionary]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download free Hebrew source data
+        run: |
+          set -euo pipefail
+          mkdir -p build/src
+          curl -fsSL https://raw.githubusercontent.com/tema4p/english-vocabulary/master/content/vocabulary/Oxford_5000_English_Vocabulary_HE.txt -o build/src/vocab.txt
+          curl -fsSL https://raw.githubusercontent.com/tema4p/english-vocabulary/master/content/phrasal-verbs/English_Phrasal_Verbs_in_Action_HE.txt -o build/src/phrasal.txt
+          curl -fsSL https://raw.githubusercontent.com/tema4p/english-vocabulary/master/content/idioms/English_Idioms_in_Action_HE.txt -o build/src/idioms.txt
+
+      - name: Generate Kindle dictionary source with RTL workaround
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import html, re, unicodedata
+
+          ROOT = Path("build")
+          SRC = ROOT / "src"
+          entries = {}
+
+          def is_hebrew(ch):
+              o = ord(ch)
+              return (0x0590 <= o <= 0x05FF) or (0xFB1D <= o <= 0xFB4F)
+
+          def reverse_hebrew_runs(s):
+              out = []
+              i = 0
+              while i < len(s):
+                  if is_hebrew(s[i]):
+                      run = []
+                      while i < len(s) and (is_hebrew(s[i]) or unicodedata.combining(s[i]) != 0):
+                          run.append(s[i])
+                          i += 1
+                      # Reverse grapheme-ish clusters so niqqud stays attached to its base letter.
+                      clusters = []
+                      j = 0
+                      while j < len(run):
+                          c = run[j]
+                          j += 1
+                          marks = []
+                          while j < len(run) and unicodedata.combining(run[j]) != 0:
+                              marks.append(run[j])
+                              j += 1
+                          clusters.append(c + "".join(marks))
+                      out.extend(reversed(clusters))
+                  else:
+                      out.append(s[i])
+                      i += 1
+              return "".join(out)
+
+          def normalize_headword(s):
+              s = s.strip().lower()
+              s = re.sub(r"\\s+", " ", s)
+              return s
+
+          def add_file(path):
+              for raw in path.read_text(encoding="utf-8").splitlines():
+                  line = raw.strip()
+                  if not line or " - " not in line:
+                      continue
+                  term, definition = line.split(" - ", 1)
+                  term = normalize_headword(term)
+                  definition = definition.strip()
+                  if not term or not definition:
+                      continue
+                  # Keep the first useful definition for duplicate keys; append distinct
+                  # translations on a single line to avoid RTL line-wrapping ambiguity.
+                  existing = entries.get(term)
+                  if existing is None:
+                      entries[term] = definition
+                  elif definition not in existing:
+                      entries[term] = existing + " / " + definition
+
+          for name in ("vocab.txt", "phrasal.txt", "idioms.txt"):
+              add_file(SRC / name)
+
+          # Sort case-insensitively, and only index clean English headwords/phrases.
+          clean = {}
+          for k, v in entries.items():
+              if not re.search(r"[a-z]", k):
+                  continue
+              clean[k] = v
+
+          html_parts = [
+              '<?xml version="1.0" encoding="UTF-8"?>',
+              '<!DOCTYPE html>',
+              '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:idx="http://www.mobipocket.com/idx" xmlns:mbp="http://www.mobipocket.com" lang="en">',
+              '<head><meta http-equiv="Content-Type" content="text/html; charset=utf-8"/><title>English-Hebrew Dictionary</title>',
+              '<style>body{font-family:serif;font-size:100%;} b{font-size:115%;} p{margin:0.3em 0 0.8em 0;}</style>',
+              '</head><body><mbp:frameset>'
+          ]
+
+          for term in sorted(clean, key=lambda x: (x.lower(), x)):
+              definition = reverse_hebrew_runs(clean[term])
+              safe_term = html.escape(term, quote=True)
+              safe_display = html.escape(definition, quote=False)
+              html_parts.append(
+                  f'<idx:entry name="default" scriptable="yes" spell="yes">'
+                  f'<idx:orth value="{safe_term}"><b>{safe_term}</b></idx:orth>'
+                  f'<p>{safe_display}</p></idx:entry><mbp:pagebreak/>'
+              )
+
+          html_parts.append("</mbp:frameset></body></html>")
+          (ROOT / "content.html").write_text("\n".join(html_parts), encoding="utf-8")
+
+          opf = '''<?xml version="1.0" encoding="UTF-8"?>
+          <package version="2.0" xmlns="http://www.idpf.org/2007/opf" unique-identifier="BookId">
+            <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+              <dc:title>English-Hebrew Offline Dictionary</dc:title>
+              <dc:language>en</dc:language>
+              <dc:creator>Community dictionary build</dc:creator>
+              <dc:identifier id="BookId">urn:uuid:9d8e18fa-1e35-4b62-9df0-english-hebrew</dc:identifier>
+              <x-metadata>
+                <DictionaryInLanguage>en</DictionaryInLanguage>
+                <DictionaryOutLanguage>he</DictionaryOutLanguage>
+                <DefaultLookupIndex>default</DefaultLookupIndex>
+              </x-metadata>
+            </metadata>
+            <manifest>
+              <item id="content" href="content.html" media-type="application/xhtml+xml"/>
+            </manifest>
+            <spine>
+              <itemref idref="content"/>
+            </spine>
+          </package>
+          '''
+          (ROOT / "dict.opf").write_text(opf, encoding="utf-8")
+          (ROOT / "ATTRIBUTION.txt").write_text(
+              "Source data: tema4p/english-vocabulary, content licensed CC BY-NC 4.0. "
+              "https://github.com/tema4p/english-vocabulary\n"
+              "This Kindle dictionary uses a legacy-MOBI RTL workaround: Hebrew letter "
+              "runs are reversed in storage so the Kindle's left-to-right dictionary renderer "
+              "displays them in normal Hebrew order.\n",
+              encoding="utf-8"
+          )
+          print("entries:", len(clean))
+          print("content bytes:", (ROOT/"content.html").stat().st_size)
+          PY
+
+      - name: Download Kindling
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/ciscoriordan/kindling/releases/download/v0.45.6/kindling-cli-linux -o build/kindling
+          chmod +x build/kindling
+          build/kindling --version
+
+      - name: Build dictionary MOBI
+        env:
+          KINDLING_STRICT_ENTRIES: "1"
+        run: |
+          set -euo pipefail
+          build/kindling build build/dict.opf -o build/English-Hebrew-Offline-Kindle.mobi
+
+      - name: Validate dictionary lookups
+        run: |
+          set -euo pipefail
+          for word in the hello guitar beautiful computer; do
+            build/kindling lookup build/English-Hebrew-Offline-Kindle.mobi "$word"
+          done
+
+      - name: Verify output
+        run: |
+          set -euo pipefail
+          test -s build/English-Hebrew-Offline-Kindle.mobi
+          ls -lh build/English-Hebrew-Offline-Kindle.mobi
+          file build/English-Hebrew-Offline-Kindle.mobi
+
+      - name: Upload dictionary
+        uses: actions/upload-artifact@v4
+        with:
+          name: English-Hebrew-Offline-Kindle-Dictionary
+          path: |
+            build/English-Hebrew-Offline-Kindle.mobi
+            build/ATTRIBUTION.txt
+          if-no-files-found: error

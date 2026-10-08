@@ -21,7 +21,7 @@ OUT = Path("build-dict/wiktionary_en_he.json")
 REPORT = Path("build-dict/SOURCE-ATTRIBUTION.txt")
 UA = "KindleEnglishHebrewDictionary/1.0 (dictionary build; contact via repository issues)"
 HEBREW = re.compile(r"[\u0590-\u05FF]")
-ASCII_HEAD = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .,'’'\-:/()!?&+]{0,99}$")
+ASCII_HEAD = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .,'\-!?&]{0,99}$")
 TAG = re.compile(r"\{([^{}]+)\}")
 
 def strip_wiki(s: str) -> str:

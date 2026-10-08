@@ -1,0 +1,31 @@
+name: Fetch open English-Hebrew dictionary source
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-dictionary-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install source fetch dependencies
+        run: python -m pip install requests
+      - name: Fetch open English-Hebrew dictionary
+        run: python tools/fetch_english_hebrew_source.py
+      - name: Upload open dictionary data
+        uses: actions/upload-artifact@v4
+        with:
+          name: Wiktionary-English-Hebrew-Source
+          path: |
+            build-dict/wiktionary_en_he.json
+            build-dict/SOURCE-ATTRIBUTION.txt
+          if-no-files-found: error
+          retention-days: 7

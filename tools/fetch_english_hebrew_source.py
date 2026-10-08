@@ -80,6 +80,27 @@ def parse_hebrew(right: str) -> list[str]:
                 terms.append(term)
     return terms
 
+def iter_source_rows(raw: str):
+    """Yield left/right cells from the source's wiki table, one entry per row."""
+    left = None
+    right = ""
+    for line in raw.splitlines():
+        row = line.strip()
+        if row == "|-":
+            if left is not None:
+                yield left, right
+            left, right = None, ""
+            continue
+        if not row.startswith("|") or row in ("|}", "{|"):
+            continue
+        cell = row[1:].strip()
+        if cell.startswith("::"):
+            right = cell[2:].strip()
+        elif left is None and cell and not cell.startswith(("}", "!")):
+            left = cell
+    if left is not None:
+        yield left, right
+
 def parse_row(line: str):
     if " | ::" not in line:
         return None
@@ -138,10 +159,8 @@ def main():
             errors.append(f"Unexpectedly short shard: {title} ({len(raw)} bytes)")
             continue
         fetched += 1
-        if letter == "a":
-            print("SOURCE_DEBUG_PREFIX", repr(raw[:1800]))
-        for line in raw.splitlines():
-            row = parse_row(line)
+        for left, right in iter_source_rows(raw):
+            row = parse_row(left + " | :: " + right)
             if not row:
                 continue
             word, trans, pos, see = row

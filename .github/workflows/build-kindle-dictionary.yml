@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - temp/kindle-hebrew-dictionary-20261009
+  pull_request:
+    branches:
+      - main
+      - temp/kindle-hebrew-dictionary-20261009
   workflow_dispatch:
 
 permissions:

@@ -1,4 +1,4 @@
-name: Build expanded English-Hebrew Kindle dictionary
+name: Build expanded English-Hebrew Kindle dictionary v2
 
 on:
   push:
